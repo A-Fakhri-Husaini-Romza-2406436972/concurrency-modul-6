@@ -39,3 +39,13 @@ Eksperimen membuktikannya jika kita membuka `127.0.0.1:7878/sleep` di window bro
 **Penjelasan kenapa ini terjadi:** 
 Fungsi `main` memproses setiap koneksi TCP dengan `handle_connection(stream)` di thread yang sama secara *synchronous* satu persatu. Ketika server tertunda 10 detik memproses request `/sleep` dari Browser A, loop `for stream in listener.incoming()` tidak akan dapat berlanjut ke perputaran (iterasi blok scope) berikutnya untuk menyambar permohonan koneksi stream dari Browser B meskipun _request_-nya adalah `/` (ringan dan biasa). Server tersebut menjadi *bottleneck*, di mana satu pengguna lambat dapat membuat semua pengguna lain di antrean ikut menjadi mangkrak tak terlayani. Oleh karena itu, kita memerlukan konkurensi (Concurrency) agar setiap stream dapat diproses oleh banyak _threads_ mandiri secara simultan (Multithreading/ThreadPool).
 
+Commit 5 Reflection notes
+
+### Multithreaded server using Threadpool
+Untuk mengatasi masalah single-threaded *bottleneck* sebelumnya, kita mengimplementasikan `ThreadPool` untuk server ini dengan kapasitas awal terbatas (contoh: 4 threads). Alih-alih membuat thread baru secara tidak terbatas per setiap *request* yang bisa menghabiskan memori sistem (rentan DoS attack), ThreadPool menyediakan jumlah thread pekerja (*workers*) yang tetap dan terus menunggu pekerjaan (job). 
+
+**Cara kerja Threadpool:**
+Server web mendengarkan koneksi lalu mengirim *closure* pemrosesan (fungsi `handle_connection(stream)`) ke ThreadPool menggunakan `pool.execute(...)`. Di dalam manajemen internal ThreadPool, *closure* tersebut dikemas menjadi `Job` (sebuah trait object bertipe `Box<dyn FnOnce() + Send + 'static>`) lalu dikirimkan via *channel transmitter* (`mpsc::Sender`).
+
+Di ujung lainnya, *receiver channel* digunakan bersama oleh kumpulan 4 `Worker` menggunakan mekanisme antrean *thread-safe* yaitu `Arc<Mutex<Receiver<Job>>>`. Adanya `Mutex` (Mutual Exclusion) menjaga agar di satu waktu hanya ada SATU Worker yang bisa menarik job dari antrean channel (menjalankan satu _request_ TCP tertentu), sisa job dari _clients_ lain akan ditarik oleh Workers lain yang tengah diam (*idle*). Konsep elegan di atas memungkinkan server untuk menangani maksimal 4 _request stream_ (`N`) sekaligus di latar belakang (asynchronous processing), sehingga simulasi hambatan lambat _request_ `/sleep` tidak akan membekukan permintaan cepat lain selama Workers mumpuni (tersedia).
+
