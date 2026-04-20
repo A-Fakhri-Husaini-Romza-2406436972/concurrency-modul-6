@@ -49,3 +49,13 @@ Server web mendengarkan koneksi lalu mengirim *closure* pemrosesan (fungsi `hand
 
 Di ujung lainnya, *receiver channel* digunakan bersama oleh kumpulan 4 `Worker` menggunakan mekanisme antrean *thread-safe* yaitu `Arc<Mutex<Receiver<Job>>>`. Adanya `Mutex` (Mutual Exclusion) menjaga agar di satu waktu hanya ada SATU Worker yang bisa menarik job dari antrean channel (menjalankan satu _request_ TCP tertentu), sisa job dari _clients_ lain akan ditarik oleh Workers lain yang tengah diam (*idle*). Konsep elegan di atas memungkinkan server untuk menangani maksimal 4 _request stream_ (`N`) sekaligus di latar belakang (asynchronous processing), sehingga simulasi hambatan lambat _request_ `/sleep` tidak akan membekukan permintaan cepat lain selama Workers mumpuni (tersedia).
 
+Commit Bonus Reflection notes
+
+### Function improvement
+Sebagai bonus perbaikan ("Function improvement"), web server ini dirancang untuk memiliki metode alternatif dari fungsi inisiasi awal `new` milik `ThreadPool` menjadi fungsi yang lebih aman, yaitu fungsi `build()`.
+
+**Mengapa ini lebih baik?**
+`ThreadPool::new` menggunakan makro pengecekan keras yaitu `assert!(size > 0);`. Jika di skenario nyata (misal data konfigurasi keliru meminta _0 threads_), *program akan langsung crash atau panik secara kasar*. Sedangkan, kita ingin program kita menjadi se-tangguh tipe I/O parser di `Chapter 12` Rust Book, yang bisa pulih atau setidaknya menutup secara elegan ("*Graceful Shutdown*"). 
+
+Fungsi `build`, alih-alih melempar _panic_, membungkus respons baliknya dengan Tipe Data `Result<ThreadPool, PoolCreationError>`. Jika parameter `size == 0`, fungsi ini tidak mematikan program, namun mengembalikan `Err` custom yang berisi *Trait Error String* yang bernilai `"ThreadPool size must be greater than zero"`. Di `main.rs`, pemanggilan inisialisasi tersebut ditangani oleh adapter `unwrap_or_else` sehingga admin server dapat melihat pesan _error stderr_ yang informatif lalu program membatalkan diri (`exit(1)`) ketimbang crash yang mengerikan. Error-handling ini jauh lebih elegan dan siap produksi (*production-ready*).
+
