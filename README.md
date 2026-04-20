@@ -27,3 +27,15 @@ Sebelum kode di-*refactor*, blok `if` dan `else` terlihat memiliki banyak sekali
 
 Oleh karena itu, kode di-*refactor* sehingga bagian `if` dan `else` hanya mengembalikan **status line HTTP** dan **nama file tujuan** dalam bentuk nilai `tuple` (Tuple Destructuring). Bagian logika pengiriman respons (pembacaan file dan pengubahan/penempelan *Header*) ditarik keluar menjadi *unconditional code* di bawahnya. Hal ini membuat keseluruhan struktur menjadi jauh lebih pendek, bersih, elegan, dan lebih _maintainable_ untuk pembaruan berikutnya tanpa mengorbankan performa!
 
+Commit 4 Reflection notes
+
+### Simulation of slow request
+Pada iterasi ini, ditambahkan sebuah *route* lambat, yakni `/sleep` (`GET /sleep HTTP/1.1`) menggunakan operator `match`. Perbedaannya dari route biasa (seperti root `/`) adalah adanya blok `thread::sleep(Duration::from_secs(10));` yang menahan jalannya eksekusi *thread* selama 10 detik sebelum akhirnya mengembalikan response sukses. 
+
+**Tujuan Simulasi lambat:**
+Mengingat web server ini saat ini berjalan secara **single-threaded** (hanya bekerja di iterasi perputaran koneksi dari `listener.incoming()`), simulasi _sleep_ ini menyoroti sebuah kelemahan fundamental kode kita jika berada di *environment* nyata (production). 
+Eksperimen membuktikannya jika kita membuka `127.0.0.1:7878/sleep` di window browser pertama, dan **kemudian tepat disaat bersamaan** kita membuka `127.0.0.1:7878/` di window browser kedua. Window kedua tersebut juga **akan ikut macet memuat (loading) selama kurang lebih 10 detik** hingga browser pertama selesai.
+
+**Penjelasan kenapa ini terjadi:** 
+Fungsi `main` memproses setiap koneksi TCP dengan `handle_connection(stream)` di thread yang sama secara *synchronous* satu persatu. Ketika server tertunda 10 detik memproses request `/sleep` dari Browser A, loop `for stream in listener.incoming()` tidak akan dapat berlanjut ke perputaran (iterasi blok scope) berikutnya untuk menyambar permohonan koneksi stream dari Browser B meskipun _request_-nya adalah `/` (ringan dan biasa). Server tersebut menjadi *bottleneck*, di mana satu pengguna lambat dapat membuat semua pengguna lain di antrean ikut menjadi mangkrak tak terlayani. Oleh karena itu, kita memerlukan konkurensi (Concurrency) agar setiap stream dapat diproses oleh banyak _threads_ mandiri secara simultan (Multithreading/ThreadPool).
+
